@@ -1,0 +1,10 @@
+[onedrive]
+netdrive_name = '123@456.com'
+
+
+
+
+[log_config]
+lagpath = 'D:/PythonLog'
+logsize = 8
+lognum = 10
