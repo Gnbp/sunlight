@@ -13,7 +13,6 @@ import imghdr
 import hashlib
 
 import time
-
 import gevent
 from gevent.queue import Queue
 from gevent.pool import Pool
@@ -129,8 +128,11 @@ class MyPdfZip(object):
         self.py_windows.mainloop()
 
 
-    def recode_origin_file(self, obj, file_root, pdf_names):
-         # 记录源文件的父名字，名字，大小，md5，类型等等
+    def recode_origin_files(self, obj, file_root, pdf_names):
+        
+        SQL = "INSERT INTO jy.origin_file (p_name, file_name, file_dir, file_type, file_size, file_md5, last_change_time) VALUES"
+        SQL_DATA = tuple()
+        # 记录源文件的父名字，名字，大小，md5，类型等等
         for origin_file in pdf_names:
             # 初始化源文件 文件对象
             o_obj = MyOriginFile()
@@ -143,75 +145,75 @@ class MyPdfZip(object):
             with open(origin_file, 'rb') as f:
                 contents = f.read()
             o_obj.file_md5 = hashlib.md5(contents).hexdigest()
-            # 将源文件插入源文件的数据库
-            self.insert_originfile2sql(o_obj)
+            SQL += '(%s, %s, %s, %s, %s, %s, %s),'
+            SQL_DATA = SQL_DATA + (o_obj.p_name, o_obj.file_name, o_obj.file_dir, o_obj.file_type,  o_obj.file_size, o_obj.file_md5, o_obj.last_change_time)
+        SQL = SQL[:-1]
+        origin_sql_command = (SQL, SQL_DATA)
+        return origin_sql_command
 
 
 
-    def composite_files(self):
-
-        rootdir = self.path1.get()
-        for parent, dirnames, filenames in os.walk(rootdir):
+    def composite_files(self, dir_list):
+        print('in function composite_files ....')
+        parent, dirnames, filenames = dir_list
             
-            self.len_files += len(dirnames)*2
-            name_str = parent.split('/')[-1].split('\\')[-1]
-            print('name_str:{}'.format(name_str))
-            
-            file_name_pdf = []
-            file_name_zip = []
-            
-            for filename in filenames:
+        self.len_files += len(dirnames)*2
+        name_str = parent.split('/')[-1].split('\\')[-1]
+        print('name_str:{}'.format(name_str))
+        
+        file_name_pdf = []
+        file_name_zip = []
+        
+        for filename in filenames:
 
-                oldfilepath = os.path.join(parent + '/' + filename)
-                # oldfilepath = oldfilepath.replace('//', '/')
-                # print('oldfilepath:{}'.format(oldfilepath))
-                if filename[-3:] == 'jpg':
-                    # 判断文件是否能打开，不能打开则不处理整个文件夹，且记录一下
-                    if imghdr.what(oldfilepath) == 'jpeg':
-                        file_name_pdf.append(oldfilepath)
-                    else:
-                        # 整个文件不做处理，标记起来
-                        # logging.error('{} 这个目录因为{}文件打不开，不做处理，请查看原因'.format(parent, filename))
-                        break
-                elif filename[-3:] == 'tif':
-                    if imghdr.what(oldfilepath) == 'tiff':
-                        file_name_pdf.append(oldfilepath)
-                    else:
-                        # 整个文件不做处理，标记起来
-                        # logging.error('{} 这个目录因为{}文件打不开，不做处理，请查看原因'.format(parent, filename))
-                        break
+            oldfilepath = os.path.join(parent + '/' + filename)
+            # oldfilepath = oldfilepath.replace('//', '/')
+            # print('oldfilepath:{}'.format(oldfilepath))
+            
+            if filename[-3:] == 'jpg':
+                # 判断文件是否能打开，不能打开则不处理整个文件夹，且记录一下
+                if imghdr.what(oldfilepath) == 'jpeg':
+                    file_name_pdf.append(oldfilepath)
                 else:
-                    file_name_zip.append(oldfilepath)
-            # # 验证源文件的完整性，不完整则不生成PDF    
-            # file_name_pdf = self.check_files(file_name_pdf)
-            if file_name_pdf != []:
-                task_pdf = {
-                    'file_root': parent,
-                    'base_name': name_str,
-                    'pdf_names': file_name_pdf,
-                }
-                pdf_file_queue.put(task_pdf)
-            
-            
-            
-            task_zip = {
-                    'file_root': parent,
-                    'base_name': name_str,
-                    'pdf_names': file_name_zip,
-                }
-            zip_file_queue.put(task_zip)
-            
-            
+                    # 整个文件不做处理，标记起来
+                    # logging.error('{} 这个目录因为{}文件打不开，不做处理，请查看原因'.format(parent, filename))
+                    break
+            elif filename[-3:] == 'tif':
+                if imghdr.what(oldfilepath) == 'tiff':
+                    file_name_pdf.append(oldfilepath)
+                else:
+                    # 整个文件不做处理，标记起来
+                    # logging.error('{} 这个目录因为{}文件打不开，不做处理，请查看原因'.format(parent, filename))
+                    break  
+            else:
+                file_name_zip.append(oldfilepath)
+        # # 验证源文件的完整性，不完整则不生成PDF    
+        # file_name_pdf = self.check_files(file_name_pdf)
+        # 插入PDF 任务队列
+        if file_name_pdf != []:
+            task_pdf = {
+                'file_root': parent,
+                'base_name': name_str,
+                'pdf_names': file_name_pdf,
+            }
+            pdf_file_queue.put(task_pdf)
+        
+        
+        # 插入ZIP 任务队列
+        task_zip = {
+                'file_root': parent,
+                'base_name': name_str,
+                'pdf_names': file_name_zip,
+            }
+        zip_file_queue.put(task_zip) 
 
         # 显示失败的文件列表
         self.sql_fail_file_name()
         print('total_files:{}'.format(self.len_files))
         
-        # 执行完关闭窗口
-        self.py_windows.destroy()
+        
             
                 
-
     def pdf_task_func(self):
         task = pdf_file_queue.get()
         file_root = task.get('file_root')
@@ -224,7 +226,7 @@ class MyPdfZip(object):
         f_obj.file_name = base_name  + '.pdf'
         if not self.query_sql_exist(f_obj) and pdf_names != []:
             # 记录源文件
-            self.recode_origin_file(f_obj, file_root, pdf_names)
+            origin_sql = self.recode_origin_files(f_obj, file_root, pdf_names)
 
             f_obj.start_time = datetime.datetime.now()
             try:
@@ -243,17 +245,17 @@ class MyPdfZip(object):
                 # self.insert_pdffile2sql(f_obj)
 
                 # 将sql 语句插入消息队列
-                self.sql_queue_task_func(f_obj)
+                self.sql_queue_task_func(f_obj, origin_sql)
                 
-    def sql_queue_task_func(self, obj):
+    def sql_queue_task_func(self, obj, origin_sql_task=None):
         # 将sql 语句插入消息队列
         SQL = "INSERT INTO jy.handler_pdf (file_name, file_dir, file_type, target_username, target_name, start_time, complete_time, complete_type) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
         SQL_DATA = (
         obj.file_name, obj.file_dir, obj.file_type,  obj.target_username, obj.target_name, obj.start_time, obj.complete_time, obj.complete_type)
-        sql_task = (SQL, SQL_DATA)
+        pdf_sql_task = (SQL, SQL_DATA)
+        sql_task = (origin_sql_task, pdf_sql_task)
         sql_queue.put(sql_task)
           
-
     def zip_task_func(self):
         task = zip_file_queue.get()
         file_root = task.get('file_root')
@@ -285,8 +287,6 @@ class MyPdfZip(object):
                 # 将sql 语句插入消息队列
                 self.sql_queue_task_func(f_obj)
             
-                    
-
     def generate_pdffile(self, obj, pdf_names):
         # 生成PDF 文件
         with open(obj.file_name, 'wb') as f:
@@ -306,9 +306,7 @@ class MyPdfZip(object):
             pdf_writer.write(font)
             # 打印日志信息
             # logging.info('{}增加书签完成'.format(obj.file_name))
-        
-        
-
+       
 
     def generate_zipfile(self, obj, zip_names):
         # 压缩其他文件
@@ -320,12 +318,27 @@ class MyPdfZip(object):
         # logging.info('{}生成ZIP完成'.format(obj.file_name))
         # print('{}生成ZIP完成'.format(obj.file_name))
 
+
         
     def conn_postgresql(self):
+        print('connection...')
         self.conn = psycopg2.connect(database='test_class', user='postgres', password='123456we')
         self.cur = self.conn.cursor()
-        self.composite_files()
-        pool = Pool(20)
+        pool = Pool(30)
+        rootdir = self.path1.get()
+        path_g_obj = os.walk(rootdir)
+        i = 0
+        while True:
+            i += 1
+            try:
+                list_dir = next(path_g_obj)
+                print('list_dir{}:{}'.format(i, list_dir))
+            except StopIteration:
+                break
+            else:
+                pool.spawn(self.composite_files, list_dir)
+            
+
         """
         # 文件处理队列
         pdf_file_queue = Queue()
@@ -342,28 +355,24 @@ class MyPdfZip(object):
                 pool.spawn(self.insert_task_func)
             else:
                 break 
-
+        
         self.conn.close()
+        # 执行完关闭窗口
+        self.py_windows.destroy()
 
     def insert_task_func(self):
         task = sql_queue.get()
-        SQL = task[0]
-        SQL_DATA = task[1]
-        self.cur.execute(SQL, SQL_DATA)
+        ORIGIN_SQL = task[0]
+        TARGET_SQL = task[1]
+        if ORIGIN_SQL == None:
+            self.cur.execute(TARGET_SQL[0], TARGET_SQL[1])
+        else:
+            self.cur.execute(ORIGIN_SQL[0], ORIGIN_SQL[1])
+            self.cur.execute(TARGET_SQL[0], TARGET_SQL[1])
+
         self.conn.commit()
+        print('complete=='*40)
 
-    def insert_pdffile2sql(self, obj):
-        # 连接数据库
-
-        if obj.file_name:
-            SQL = "INSERT INTO jy.handler_pdf (file_name, file_dir, file_type, target_username, target_name, start_time, complete_time, complete_type) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
-            SQL_DATA = (
-            obj.file_name, obj.file_dir, obj.file_type,  obj.target_username, obj.target_name, obj.start_time, obj.complete_time, obj.complete_type)
-            self.cur.execute(SQL, SQL_DATA)
-            self.conn.commit()
-            # 打印日志信息
-            # logging.info('格式为{} 的文件：{} 在{} 到{} 耗时{} ，由{}位置，生成到{}，生成状态是否成功：{}'.format(obj.file_type, obj.file_name, obj.start_time, obj.complete_time, 
-            # (obj.complete_time-obj.start_time), obj.file_dir, obj.target_name, obj.complete_type))
 
     
     def query_sql_exist(self, obj):
@@ -403,17 +412,6 @@ class MyPdfZip(object):
             # logging.info('恭喜你，没有数据失败')
 
         self.path3.set(path3_data)
-
-    def insert_originfile2sql(self, obj):
-        if obj.file_name:
-            
-            SQL = "INSERT INTO jy.origin_file (p_name, file_name, file_dir, file_type, file_size, file_md5, last_change_time) VALUES (%s, %s, %s, %s, %s, %s, %s)"
-            SQL_DATA = (
-            obj.p_name, obj.file_name, obj.file_dir, obj.file_type,  obj.file_size, obj.file_md5, obj.last_change_time)
-            self.cur.execute(SQL, SQL_DATA)
-            self.conn.commit()
-            # 打印日志信息
-            # logging.info('格式为{} 的文件：{}, 它的大小为：{} kb，MD5值为：{}， 最后一次修改的时间为：{}'.format(obj.file_type, obj.file_name, obj.file_size, obj.file_md5, obj.last_change_time))
 
 # def main():
 #     root = Tk()
@@ -455,4 +453,4 @@ if __name__ == "__main__":
     a = MyPdfZip()
     a.run()
     end_time = time.time()
-    print('use time :{}'.format(end_time-start_time))
+    print('use time :{}'.format(end_time-start_time))                   
